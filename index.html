@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ERB Constituencies</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet-search@3.0.4/dist/leaflet-search.min.css"
+  />
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+      background: #f2f2f2;
+    }
+    .leaflet-container {
+      font: 14px/1.4 "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    }
+    .info, .legend {
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      border-radius: 6px;
+    }
+    .info h4 {
+      margin: 0 0 6px 0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .legend {
+      line-height: 18px;
+      color: #222;
+    }
+    .legend h4 {
+      margin: 0 0 6px 0;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .legend .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+      white-space: nowrap;
+    }
+    .legend .swatch {
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(0,0,0,0.2);
+      flex: 0 0 18px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  ></script>
+  <script src="https://unpkg.com/leaflet-search@3.0.4/dist/leaflet-search.min.js"></script>
+  <script>
+    const map = L.map("map", {
+      zoomControl: true,
+      minZoom: 4
+    });
+
+    const base = L.tileLayer(
+      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {
+        maxZoom: 18,
+        attribution: "&copy; OpenStreetMap contributors"
+      }
+    ).addTo(map);
+
+    const info = L.control({ position: "topright" });
+    info.onAdd = function () {
+      this._div = L.DomUtil.create("div", "info");
+      this.update();
+      return this._div;
+    };
+    const COST_FIELD = "Implied Cost to SMEs (sub-250)";
+
+    function formatCurrency(value) {
+      if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+      return new Intl.NumberFormat("en-GB", {
+        style: "currency",
+        currency: "GBP",
+        maximumFractionDigits: 0
+      }).format(value);
+    }
+
+    function getColor(value) {
+      if (value > 5000000) return "#000000";
+      if (value > 2000000) return "#580a80";
+      if (value > 1000000) return "#c6257c";
+      if (value > 500000) return "#ff7f56";
+      return "#fcfdb7";
+    }
+
+    info.update = function (props) {
+      const cost = props ? Number(props[COST_FIELD]) : null;
+      this._div.innerHTML =
+        "<h4>Constituency</h4>" +
+        (props
+          ? `<strong>${props["Constituency Name"] || "Unnamed"}</strong><br/>` +
+            `<span>${props["PCON24CD"] || ""}</span><br/>` +
+            `<span>Implied Cost: ${formatCurrency(cost)}</span>`
+          : "Hover over a constituency");
+    };
+    info.addTo(map);
+
+    function style(feature) {
+      const cost = Number(feature.properties?.[COST_FIELD]);
+      return {
+        weight: 1,
+        color: "#3a3a3a",
+        fillColor: getColor(cost),
+        fillOpacity: 0.55
+      };
+    }
+
+    function highlightFeature(e) {
+      const layer = e.target;
+      layer.setStyle({
+        weight: 2,
+        color: "#1b1b1b",
+        fillOpacity: 0.8
+      });
+      if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+        layer.bringToFront();
+      }
+      info.update(layer.feature.properties);
+    }
+
+    function resetHighlight(e) {
+      geojson.resetStyle(e.target);
+      info.update();
+    }
+
+    function zoomToFeature(e) {
+      map.fitBounds(e.target.getBounds(), { padding: [20, 20] });
+    }
+
+    function onEachFeature(feature, layer) {
+      layer.on({
+        mouseover: highlightFeature,
+        mouseout: resetHighlight,
+        click: zoomToFeature
+      });
+      const name = feature.properties?.["Constituency Name"] || "Unnamed";
+      layer.bindTooltip(name, { sticky: true });
+    }
+
+    let geojson;
+
+    fetch("erb_constitutencies.geojson")
+      .then((res) => res.json())
+      .then((data) => {
+        geojson = L.geoJSON(data, { style, onEachFeature }).addTo(map);
+        map.fitBounds(geojson.getBounds(), { padding: [20, 20] });
+
+        const search = new L.Control.Search({
+          layer: geojson,
+          propertyName: "Constituency Name",
+          marker: false
+        });
+        map.addControl(search);
+        search.on("search:locationfound", function (e) {
+          if (e.layer && e.layer.getBounds) {
+            map.fitBounds(e.layer.getBounds(), { padding: [20, 20] });
+            return;
+          }
+          if (e.latlng) {
+            map.setView(e.latlng, 10);
+          }
+        });
+
+        const legend = L.control({ position: "bottomright" });
+        legend.onAdd = function () {
+          const div = L.DomUtil.create("div", "legend");
+          div.innerHTML = `
+            <h4>Implied Cost</h4>
+            <div class="row"><span class="swatch" style="background:#fcfdb7"></span>£270,990 - 500,000 [31]</div>
+            <div class="row"><span class="swatch" style="background:#ff7f56"></span>500,000 - 1,000,000 [292]</div>
+            <div class="row"><span class="swatch" style="background:#c6257c"></span>1,000,000 - 2,000,000 [283]</div>
+            <div class="row"><span class="swatch" style="background:#580a80"></span>2,000,000 - 5,000,000 [20]</div>
+            <div class="row"><span class="swatch" style="background:#000000"></span>5,000,000 - £39,000,000 [5]</div>
+          `;
+          return div;
+        };
+        legend.addTo(map);
+      })
+      .catch((err) => {
+        console.error("Failed to load geojson", err);
+      });
+  </script>
+</body>
+</html>
