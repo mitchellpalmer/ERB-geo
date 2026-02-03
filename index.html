@@ -27,6 +27,22 @@
       width: 100%;
       background: #f2f2f2;
     }
+    .download-btn {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      z-index: 1000;
+      background: #111;
+      color: #fff;
+      border: 0;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .download-btn:hover {
+      background: #2b2b2b;
+    }
     .leaflet-container {
       font: 14px/1.4 "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
     }
@@ -67,11 +83,13 @@
 </head>
 <body>
   <div id="map"></div>
+  <a id="downloadCsv" class="download-btn" href="constituency costs.csv" download>Download CSV</a>
 
   <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
   ></script>
   <script src="https://unpkg.com/leaflet-search@3.0.4/dist/leaflet-search.min.js"></script>
+  <script src="https://unpkg.com/proj4@2.10.0/dist/proj4.js"></script>
   <script>
     const map = L.map("map", {
       zoomControl: true,
@@ -93,6 +111,12 @@
       return this._div;
     };
     const COST_FIELD = "Implied Cost to SMEs (sub-250)";
+
+    proj4.defs(
+      "EPSG:27700",
+      "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 " +
+      "+ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs"
+    );
 
     function formatCurrency(value) {
       if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
@@ -118,7 +142,7 @@
         (props
           ? `<strong>${props["Constituency Name"] || "Unnamed"}</strong><br/>` +
             `<span>${props["PCON24CD"] || ""}</span><br/>` +
-            `<span>Implied Cost: ${formatCurrency(cost)}</span>`
+            `<span>Implied Cost to SMEs: ${formatCurrency(cost)}</span>`
           : "Hover over a constituency");
     };
     info.addTo(map);
@@ -126,11 +150,42 @@
     function style(feature) {
       const cost = Number(feature.properties?.[COST_FIELD]);
       return {
-        weight: 1,
+        weight: 0.3,
         color: "#3a3a3a",
         fillColor: getColor(cost),
         fillOpacity: 0.55
       };
+    }
+
+    function nutsStyle() {
+      return {
+        weight: 1.5,
+        color: "#1a1a1a",
+        fillOpacity: 0
+      };
+    }
+
+    function reprojectCoords(coords, fromCrs, toCrs) {
+      if (typeof coords[0] === "number") {
+        const [x, y] = coords;
+        const [lng, lat] = proj4(fromCrs, toCrs, [x, y]);
+        return [lng, lat];
+      }
+      return coords.map((c) => reprojectCoords(c, fromCrs, toCrs));
+    }
+
+    function reprojectGeoJSON(geojson, fromCrs, toCrs) {
+      const out = {
+        type: geojson.type,
+        features: geojson.features.map((f) => ({
+          ...f,
+          geometry: {
+            ...f.geometry,
+            coordinates: reprojectCoords(f.geometry.coordinates, fromCrs, toCrs)
+          }
+        }))
+      };
+      return out;
     }
 
     function highlightFeature(e) {
@@ -193,7 +248,7 @@
         legend.onAdd = function () {
           const div = L.DomUtil.create("div", "legend");
           div.innerHTML = `
-            <h4>Implied Cost</h4>
+            <h4>Implied Cost to SMEs in Constituency</h4>
             <div class="row"><span class="swatch" style="background:#fcfdb7"></span>£270,990 - 500,000 [31]</div>
             <div class="row"><span class="swatch" style="background:#ff7f56"></span>500,000 - 1,000,000 [292]</div>
             <div class="row"><span class="swatch" style="background:#c6257c"></span>1,000,000 - 2,000,000 [283]</div>
@@ -203,6 +258,18 @@
           return div;
         };
         legend.addTo(map);
+
+        return fetch("NUTS1_Jan_2018_SGCB_in_the_UK_2022_1573160115369314421.geojson");
+      })
+      .then((res) => res.json())
+      .then((nutsData) => {
+        const nuts4326 = reprojectGeoJSON(nutsData, "EPSG:27700", "EPSG:4326");
+        const nutsLayer = L.geoJSON(nuts4326, {
+          style: nutsStyle,
+          interactive: false
+        });
+        nutsLayer.addTo(map);
+        nutsLayer.bringToFront();
       })
       .catch((err) => {
         console.error("Failed to load geojson", err);
