@@ -216,8 +216,7 @@
         mouseout: resetHighlight,
         click: zoomToFeature
       });
-      const name = feature.properties?.["Constituency Name"] || "Unnamed";
-      layer.bindTooltip(name, { sticky: true });
+      // Tooltips removed; hover info box is used instead.
     }
 
     let geojson;
